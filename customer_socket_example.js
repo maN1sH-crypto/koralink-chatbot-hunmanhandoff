@@ -1,0 +1,7 @@
+// Add this to your existing KoraLink customer frontend.
+const BACKEND_URL='https://YOUR-BACKEND-DOMAIN';
+let customerId=localStorage.getItem('kora_customer_id');
+let conversationId=localStorage.getItem('kora_conversation_id');
+async function ensureSession(){if(customerId&&conversationId)return;const r=await fetch(BACKEND_URL+'/api/customer/session',{method:'POST'});const d=await r.json();customerId=d.customer_id;conversationId=d.conversation.id;localStorage.setItem('kora_customer_id',customerId);localStorage.setItem('kora_conversation_id',conversationId)}
+async function sendCustomerMessage(message,language='en'){await ensureSession();const r=await fetch(BACKEND_URL+'/api/customer/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({customer_id:customerId,conversation_id:conversationId,message,language})});const d=await r.json();if(!r.ok)throw Error(d.error||'Server error');conversationId=d.conversation.id;localStorage.setItem('kora_conversation_id',conversationId);return d}
+const socket=io(BACKEND_URL);socket.on('connect',async()=>{await ensureSession();socket.emit('join_customer',{customer_id:customerId,conversation_id:conversationId})});socket.on('new_message',m=>{if(m.sender_type==='agent')renderAgentMessage(m.message);else if(m.sender_type==='system')renderSystemMessage(m.message)});socket.on('conversation_claimed',()=>showHumanMode());socket.on('conversation_closed',()=>showConversationClosed());

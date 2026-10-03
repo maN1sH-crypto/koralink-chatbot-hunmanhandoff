@@ -1,0 +1,11 @@
+Flask>=3.0,<4
+Flask-Cors>=4,<7
+Flask-SocketIO>=5.3,<6
+pymongo>=4.7,<5
+simple-websocket>=1,<2
+Werkzeug>=3,<4
+deep-translator>=1.11,<2
+pypdf
+groq
+python-dotenv
+torch

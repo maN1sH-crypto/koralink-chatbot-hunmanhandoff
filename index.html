@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title> KoraLink Assistant</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+.chat-icon {
+    display: inline-block;
+    vertical-align: -3px;
+    margin: 0 2px;
+    color: #2f3fba; /* lucide svgs use stroke="currentColor", which follows this */
+}
+.chat-icon svg {
+    width: 15px;
+    height: 15px;
+}
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Modernized font */
+}
+
+body {
+    background: linear-gradient(135deg,#1e3c72,#2a5298,#4facfe);
+    background-size:400% 400%;
+    animation: gradientMove 12s ease infinite;
+}
+
+@keyframes gradientMove{
+    0%{background-position: 0% 50%;}
+    50%{background-position:100% 50%;}
+    100%{background-position:0% 50%;}
+}
+
+
+.chat-btn {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #2f3fba;
+    color: white;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(47, 63, 186, 0.3); /* Softer, colored shadow */
+    transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.chat-input button:hover {
+    transform: scale(1.15);
+}
+
+.chat-input input{
+    border-radius:40px;
+    box-shadow:0 3px 15px rgba(0,0,0,.1);
+}
+
+.chat-container {
+    position: fixed;
+    bottom: 95px;
+    right: 20px;
+    width: 380px;
+    height: 600px; /* Marginally taller for better balance */
+    background: rgba(255,255,255,.15); /* Subtle, clean off-white background */
+    backdrop-filter:blur(18px);
+    border:1px solid rgba(255,255,255,.2);
+    border-radius: 24px; /* More modern, rounded corners */
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12); /* Smoother, realistic depth shadow */
+    display: none;
+    flex-direction: column;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.chat-header {
+    background: linear-gradient(90deg,#2563eb,#4f46e5);
+    color: white;
+    padding: 15px;
+    font-size: 18px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+#languageSelect {
+    background: white;
+    color: #2f3fba;
+    border: none;
+    border-radius: 8px;
+    padding: 3px 5px;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+    width: 45px;
+    
+}
+
+.close-btn {
+    cursor: pointer;
+    font-size: 20px;
+    opacity: 0.85;
+    transition: opacity 0.2s;
+}
+
+.close-btn:hover {
+    opacity: 1;
+}
+
+/* --- THE CHAT BOX (SCROLLBAR HIDDEN HERE) --- */
+.chat-box {
+    flex: 1;
+    overflow-y: scroll; /* Changed to scroll to enforce behavior */
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px; /* Native gap between message wrappers */
+    position:relative;
+
+    background:white;
+
+    /* Hide scrollbar for IE, Edge and Firefox */
+   /* -ms-overflow-style: none;  /* IE and Edge */
+   /* scrollbar-width: none;  /* Firefox */
+}
+.chat-box::before{
+    content:"";
+    position:fixed;
+    top:50%;
+    left:50%;
+    width:220px;
+    height:220px;
+
+    background-image:url("https://res.cloudinary.com/tdbya9oh/image/upload/v1790333977/KoraLink.png");
+    background-repeat:no-repeat;
+    background-position:center;
+    background-size:contain;
+
+    transform:translate(-50%,-50%);
+    opacity:0.15;
+
+    pointer-events:none;
+    z-index: 0;
+}
+.bot-message,
+.user-message,
+.error-message{
+    position:relative;
+    z-index: 1;
+}
+.chat-box{
+    position: relative;
+}
+/* Hide scrollbar for Chrome, Safari and Opera */
+.chat-box::-webkit-scrollbar {
+    display: none;
+}
+
+.bot-message {
+    background: white;
+    padding: 12px 16px;
+    margin: 6px 0;
+    border-radius: 16px 16px 16px 4px; /* Chat bubble style edge */
+    max-width: 80%;
+    width: fit-content;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .08);
+    color: #334155; /* Soft dark slate text color */
+    font-size: 15px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.user-message{
+    animation:popup .3s ease;
+    background: #2563eb; /* Changed to match your branding theme color */
+    color: white; /* Contrast text */
+    padding: 12px 16px;
+    margin: 6px 0 6px auto;
+    border-radius: 16px 16px 4px 16px; /* Chat bubble style edge */
+    max-width: 80%;
+    width: fit-content;
+    box-shadow: 0 3px 8px rgba(47, 63, 186, 0.15);
+    font-size: 15px;
+    line-height: 1.4;
+}
+    
+.error-message {
+    background: #fef2f2;
+    border: 1px solid #fee2e2;
+    padding: 12px;
+    margin: 10px 0;
+    border-radius: 12px;
+    max-width: 80%;
+    width: fit-content;
+    color: #ef4444;
+    font-size: 14px;
+}
+
+/* Clickable numbered options rendered inside a bot message */
+.list-option {
+    cursor: pointer;
+    padding: 2px 4px;
+    margin: 2px -4px;
+    border-radius: 6px;
+    transition: background-color 0.15s;
+}
+
+.list-option:hover {
+    background: #eef1fd;
+    color: #2f3fba;
+}
+
+.typing {
+    display: none;
+    color: #64748b;
+    padding: 8px 20px;
+    font-style: italic;
+    font-size: 13px;
+    background: #f1f5f9;
+    flex-shrink: 0;
+}
+
+.chat-input {
+    display: flex;
+    align-items: center;
+    padding: 16px;
+    border-top: 1px solid #e2e8f0;
+    background: white;
+    flex-shrink: 0;
+}
+
+.chat-input input {
+    flex: 1;
+    padding: 12px 18px;
+    border-radius: 24px;
+    border: 1px solid #cbd5e1;
+    outline: none;
+    font-size: 15px;
+    color: #334155;
+    transition: border-color 0.2s;
+    background: #f8fafc;
+}
+
+.chat-input input:focus {
+    border-color: #2f3fba;
+    background: white;
+}
+
+.chat-input button {
+    width: 44px;
+    height: 44px;
+    margin-left: 10px;
+    border: none;
+    border-radius: 50%; /* Perfect circle */
+    background: #2f3fba;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+.chat-input button:hover:not(:disabled) {
+    background: #2432a3;
+    transform: scale(1.05);
+}
+
+.chat-input button:disabled {
+    background: #e2e8f0;
+    color: #94a3b8;
+    cursor: not-allowed;
+}
+
+/* --- Bot message inline markdown (bold / inline code) --- */
+.bot-message strong { color: #1e293b; font-weight: 700; }
+.bot-message code {
+    background: #eef2ff;
+    color: #3730a3;
+    padding: 1px 5px;
+    border-radius: 5px;
+    font-size: 13px;
+}
+
+/* --- Screenshot / visual guide gallery attached to a bot message --- */
+.chat-gallery {
+    position: relative;
+    margin-top: 10px;
+    max-width: 280px;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #f1f5f9;
+    box-shadow: 0 2px 10px rgba(0,0,0,.10);
+    outline: none;
+}
+
+.chat-gallery:focus-visible {
+    box-shadow: 0 0 0 3px rgba(47,63,186,.4), 0 2px 10px rgba(0,0,0,.10);
+}
+
+.chat-gallery-viewport {
+    position: relative;
+    width: 100%;
+    height: 190px;
+    overflow: hidden;
+    background: #f1f5f9;
+    touch-action: pan-y;
+}
+
+.chat-gallery-track {
+    display: flex;
+    height: 100%;
+    transition: transform .32s cubic-bezier(.4,0,.2,1);
+}
+
+.chat-gallery-slide {
+    position: relative;
+    flex-shrink: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chat-gallery-slide img {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    cursor: zoom-in;
+    opacity: 0;
+    transition: opacity .25s ease;
+}
+
+.chat-gallery-slide img.loaded {
+    opacity: 1;
+}
+
+.bot-image-skeleton {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%);
+    background-size: 400% 100%;
+    animation: imgShimmer 1.4s ease infinite;
+}
+
+.chat-gallery-slide img.loaded + .bot-image-skeleton {
+    display: none;
+}
+
+@keyframes imgShimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+}
+
+.chat-gallery-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(15, 23, 42, .45);
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .15s ease, opacity .15s ease;
+    z-index: 2;
+}
+
+.chat-gallery-nav:hover { background: rgba(15, 23, 42, .7); }
+.chat-gallery-nav:disabled { opacity: 0; pointer-events: none; }
+.chat-gallery-prev { left: 8px; }
+.chat-gallery-next { right: 8px; }
+
+.chat-gallery-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 10px 2px;
+}
+
+.chat-gallery-dots {
+    display: flex;
+    gap: 5px;
+}
+
+.chat-gallery-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #cbd5e1;
+    cursor: pointer;
+    transition: background .15s ease, transform .15s ease;
+}
+
+.chat-gallery-dot.active {
+    background: #2f3fba;
+    transform: scale(1.25);
+}
+
+.chat-gallery-counter {
+    font-size: 11px;
+    color: #64748b;
+    margin-left: auto;
+}
+
+.bot-image-caption {
+    font-size: 12px;
+    color: #64748b;
+    padding: 2px 10px 8px;
+    line-height: 1.3;
+}
+
+/* --- Fullscreen lightbox viewer --- */
+.lightbox-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, .9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 24px;
+    animation: fadeIn .15s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.lightbox-stage {
+    position: relative;
+    max-width: 92vw;
+    max-height: 88vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: default;
+}
+
+.lightbox-img {
+    max-width: 92vw;
+    max-height: 88vh;
+    object-fit: contain;
+    border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    transition: transform .12s ease-out;
+    touch-action: none;
+    user-select: none;
+}
+
+.lightbox-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,.12);
+    color: #fff;
+    font-size: 26px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    transition: background .15s ease;
+}
+.lightbox-nav:hover { background: rgba(255,255,255,.25); }
+.lightbox-prev { left: 16px; }
+.lightbox-next { right: 16px; }
+
+.lightbox-close {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,.12);
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+    z-index: 2;
+    transition: background .15s ease;
+}
+.lightbox-close:hover { background: rgba(255,255,255,.25); }
+
+.lightbox-counter {
+    position: absolute;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #e2e8f0;
+    font-size: 13px;
+    background: rgba(15,23,42,.55);
+    padding: 4px 12px;
+    border-radius: 999px;
+}
+
+/* --- Dark mode --- */
+@media (prefers-color-scheme: dark) {
+    .chat-gallery, .chat-gallery-viewport, .chat-gallery-slide img:not(.loaded) {
+        background: #1e293b;
+    }
+    .bot-image-skeleton {
+        background: linear-gradient(90deg, #334155 25%, #1e293b 37%, #334155 63%);
+        background-size: 400% 100%;
+    }
+    .bot-image-caption, .chat-gallery-counter { color: #94a3b8; }
+    .chat-gallery-dot { background: #475569; }
+    .chat-gallery-dot.active { background: #7c8cf5; }
+}
+
+/* --- Mobile responsiveness --- */
+@media (max-width: 480px) {
+    .chat-container {
+        width: 92vw;
+        height: 78vh;
+        right: 4vw;
+        bottom: 88px;
+    }
+    .chat-btn {
+        bottom: 16px;
+        right: 16px;
+    }
+    .bot-message, .user-message, .error-message {
+        max-width: 88%;
+    }
+    .chat-gallery {
+        max-width: 100%;
+    }
+}
+    </style>
+
+</head>
+ 
+<body>
+ 
+<button class="chat-btn" onclick="toggleChat()"><img src="https://res.cloudinary.com/tdbya9oh/image/upload/v1790333977/bot.png" style="height: 40px; width: 40; border-radius: 50%; margin-top: 7px;"></button>
+ 
+<div class="chat-container" id="chatContainer">
+ 
+<div class="chat-header">
+
+    <div style="display:flex; align-items:center; gap:10px;">
+        <img src="https://res.cloudinary.com/tdbya9oh/image/upload/v1790333977/bot.png"
+             style="height:40px; width:40px; border-radius:50%;">
+
+        <span>KoraLink Assistant</span>
+    </div> 
+
+    <div style="display:flex; align-items:center; gap:10px;">
+
+        <select id="languageSelect">
+            <option value="en">En</option>
+            <option value="rw">Kiny</option>
+        </select>
+
+        <span class="close-btn"
+              onclick="toggleChat()">
+            &#215;
+        </span>
+
+    </div>
+
+</div>
+ 
+    <div class="chat-box" id="chatBox">
+        <div class="bot-message">Hello! How can I help you today? <a href="https://www.djyh.rw">KoraLink Official Website</a></div>
+    </div>
+ 
+    <div class="typing" id="typing">Bot is typing...</div>
+ 
+    <div class="chat-input">
+        <input
+            type="text"
+            id="message"
+            placeholder="Type your message..."
+            onkeypress="if(event.key === 'Enter') sendMessage()"
+        >
+        <button id="sendBtn" onclick="sendMessage()">&#10148;</button>
+    </div>
+ 
+</div>
+ 
+<script>
+
+// Maps the :token: placeholders used in koralink.json answers to real
+// Lucide icon names. Add more entries here as you add more :token:s.
+var ICON_MAP = {
+    home: "home",
+    inventory: "box",
+    services: "zap",
+    wallet: "wallet",
+    help: "circle-help",
+    profile: "circle-user-round",
+    settings: "settings-2",
+    refresh: "refresh-cw",
+    user:"user-round",
+    card: "credit-card",
+    password: "lock",
+    feedback: "message-square",
+    report: "flag",
+    privacy: "globe",
+    terms: "file-text",
+    about: "building-2",
+    contact: "mail",
+    hotline: "phone",
+    coupon: "gift",
+    communications: "message-square",
+    logout: "log-out",
+    location: "map-pin",
+    business: "briefcase",
+    language: "globe"
+};
+var ICON_TOKEN_REGEX = /:([a-z\-]+):/g;
+
+function escapeHtml(str) {
+    var div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// Turns "Tap :wallet: Wallet at the bottom" into
+// 'Tap <i class="chat-icon" data-lucide="wallet"></i> Wallet at the bottom'
+// Text is escaped first so raw answers can never inject HTML.
+function renderIconLine(line) {
+    var escaped = escapeHtml(line);
+    escaped = renderInlineMarkdown(escaped);
+    return escaped.replace(ICON_TOKEN_REGEX, function (match, name) {
+        var iconName = ICON_MAP[name];
+        if (!iconName) return match; // unknown token, leave as-is
+        return '<i class="chat-icon" data-lucide="' + iconName + '"></i>';
+    });
+}
+
+// Very small, safe subset of markdown for bot answers: **bold** and
+// `inline code`. Runs on ALREADY-escaped text, so it can never inject
+// real HTML from the answer content itself - only the tags we add here.
+function renderInlineMarkdown(escapedText) {
+    return escapedText
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+?)`/g, "<code>$1</code>");
+}
+
+// Remembers the numbered options from the bot's most recent message,
+// e.g. { "1": "Store your balance.", "2": "Send money to other iKofi users." }
+// so a short follow-up like "1" can be resolved into a real question.
+let lastBotListItems = {};
+
+// Parallel map for the same message: { "3": {src, alt, caption}, ... }
+// screenshots tied to ONE specific step, not shown until that step is
+// clicked - so the picture appears right when the user asks about that
+// exact step instead of all at once with the initial answer.
+let lastBotStepImages = {};
+
+function toggleChat() {
+    var box = document.getElementById("chatContainer");
+    box.style.display = box.style.display === "flex" ? "none" : "flex";
+}
+
+// Matches lines like "1. Store your balance." or "2) Send money"
+var LIST_ITEM_REGEX = /^\s*(\d{1,2})[\.\)]\s+(.+)$/;
+
+function extractListItems(text) {
+    var items = {};
+    text.split("\n").forEach(function (line) {
+        var match = line.match(LIST_ITEM_REGEX);
+        if (match) {
+            items[match[1]] = match[2].trim();
+        }
+    });
+    return items;
+}
+
+function addMessage(text, type, images, stepImages) {
+    var chatBox = document.getElementById("chatBox");
+    var div = document.createElement("div");
+    div.className = type + "-message";
+
+    if (type === "bot") {
+        // Remember this message's numbered options (and their per-step
+        // images, if any) for the next turn, and render each numbered
+        // line as a clickable option. If this reply doesn't contain a
+        // numbered list (e.g. it's a follow-up answer to an option the
+        // user already picked), keep the PREVIOUS list around instead of
+        // wiping it out, so "2" still resolves correctly even after an
+        // in-between reply with no list of its own.
+        var newItems = extractListItems(text);
+        if (Object.keys(newItems).length > 0) {
+            lastBotListItems = newItems;
+            lastBotStepImages = stepImages || {};
+        }
+        renderBotMessage(div, text);
+
+        // Images/screenshots are optional - most answers won't have any,
+        // and the bot's text response always works standalone either way.
+        // Accepts an array (0, 1, or several images) for one answer,
+        // rendered as a single-image-at-a-time gallery/carousel.
+        // (Per-step images in `stepImages` are intentionally NOT shown
+        // here - they only appear once the user clicks that specific step.)
+        if (Array.isArray(images) && images.length > 0) {
+            var gallery = createChatGallery(images);
+            if (gallery) div.appendChild(gallery);
+        }
+    } else {
+        // User bubbles can also contain a :token: (e.g. after clicking a
+        // bot list-option whose line included one, or pasting answer
+        // text back in) - render it exactly the same way bot text is.
+        div.innerHTML = renderIconLine(text);
+    }
+
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+
+    // Icons are only swapped in for elements that are actually attached
+    // to the document, so this runs AFTER appendChild above and covers
+    // both the bot and user branches in one place (calling it with no
+    // arguments scans the whole document - already-converted icons no
+    // longer have a data-lucide attribute, so they're skipped for free).
+    if (window.lucide && typeof window.lucide.createIcons === "function") {
+        window.lucide.createIcons();
+    } else {
+        console.error("Lucide is not ready!");
+    }
+}
+
+function renderBotMessage(container, text) {
+    text.split("\n").forEach(function (line) {
+        var match = line.match(LIST_ITEM_REGEX);
+
+        var lineDiv = document.createElement("div");
+
+        lineDiv.innerHTML = renderIconLine(line);
+
+        if (match) {
+            lineDiv.className = "list-option";
+            lineDiv.title = "Click to ask about this";
+
+            lineDiv.onclick = function () {
+                selectListOption(match[1]);
+            };
+        }
+
+        container.appendChild(lineDiv);
+    });
+}
+
+// Renders one or more screenshots/visual guides under a bot message as a
+// single-image-at-a-time carousel (arrows + dots + "Image X of Y"), the
+// same component whether there's 1 image or many - nav/dots simply don't
+// render when there's nothing to navigate to. Clicking the image opens the
+// same gallery fullscreen, so zoom/nav continue to work there too.
+function createChatGallery(imageList) {
+    var images = (imageList || []).filter(function (img) { return img && img.src; });
+    var total = images.length;
+    if (total === 0) return null;
+
+    var current = 0;
+
+    var root = document.createElement("div");
+    root.className = "chat-gallery";
+    root.tabIndex = 0; // enables keyboard arrow-key nav while this gallery has focus
+
+    var viewport = document.createElement("div");
+    viewport.className = "chat-gallery-viewport";
+
+    var track = document.createElement("div");
+    track.className = "chat-gallery-track";
+    track.style.width = (total * 100) + "%";
+
+    var captionEl = document.createElement("div");
+    captionEl.className = "bot-image-caption";
+
+    var prevBtn = null, nextBtn = null, dotsWrap = null, counterEl = null;
+
+    var slides = images.map(function (image, i) {
+        var slide = document.createElement("div");
+        slide.className = "chat-gallery-slide";
+        slide.style.width = (100 / total) + "%";
+
+        var skeleton = document.createElement("div");
+        skeleton.className = "bot-image-skeleton";
+
+        var img = document.createElement("img");
+        img.alt = image.alt || "Screenshot";
+        img.dataset.src = image.src;
+
+        img.onload = function () { img.classList.add("loaded"); };
+        img.onerror = function () {
+            // Real screenshot isn't uploaded yet (or the path is wrong) -
+            // fall back to the generic placeholder instead of a broken icon.
+            if (img.dataset.fallbackApplied) return;
+            img.dataset.fallbackApplied = "1";
+            img.src = "media/placeholder-screenshot.svg";
+            img.classList.add("loaded");
+        };
+        img.onclick = function () {
+            openLightbox(images, current);
+        };
+
+        slide.appendChild(img);
+        slide.appendChild(skeleton);
+        track.appendChild(slide);
+        return img;
+    });
+
+    // Only render nav/dots/counter when there's more than one image.
+    if (total > 1) {
+        prevBtn = document.createElement("button");
+        prevBtn.className = "chat-gallery-nav chat-gallery-prev";
+        prevBtn.setAttribute("aria-label", "Previous image");
+        prevBtn.innerHTML = "&#8249;";
+        prevBtn.onclick = function (e) { e.stopPropagation(); goTo(current - 1); };
+
+        nextBtn = document.createElement("button");
+        nextBtn.className = "chat-gallery-nav chat-gallery-next";
+        nextBtn.setAttribute("aria-label", "Next image");
+        nextBtn.innerHTML = "&#8250;";
+        nextBtn.onclick = function (e) { e.stopPropagation(); goTo(current + 1); };
+
+        var footer = document.createElement("div");
+        footer.className = "chat-gallery-footer";
+
+        dotsWrap = document.createElement("div");
+        dotsWrap.className = "chat-gallery-dots";
+        images.forEach(function (_, i) {
+            var dot = document.createElement("span");
+            dot.className = "chat-gallery-dot";
+            dot.onclick = function (e) { e.stopPropagation(); goTo(i); };
+            dotsWrap.appendChild(dot);
+        });
+
+        counterEl = document.createElement("div");
+        counterEl.className = "chat-gallery-counter";
+
+        footer.appendChild(dotsWrap);
+        footer.appendChild(counterEl);
+        root.appendChild(prevBtn);
+        root.appendChild(nextBtn);
+    }
+
+    viewport.appendChild(track);
+    root.appendChild(viewport);
+    if (total > 1) root.appendChild(footer);
+    root.appendChild(captionEl);
+
+    // Lazy-load: only fetch the current slide plus its immediate neighbors,
+    // rather than every image in the gallery up front.
+    function ensureLoaded(index) {
+        [index - 1, index, index + 1].forEach(function (i) {
+            if (i < 0 || i >= total) return;
+            var img = slides[i];
+            if (!img.src && img.dataset.src) img.src = img.dataset.src;
+        });
+    }
+
+    function update() {
+        track.style.transform = "translateX(-" + (current * (100 / total)) + "%)";
+        if (dotsWrap) {
+            Array.prototype.forEach.call(dotsWrap.children, function (dot, i) {
+                dot.classList.toggle("active", i === current);
+            });
+        }
+        if (counterEl) counterEl.textContent = "Image " + (current + 1) + " of " + total;
+        if (prevBtn) prevBtn.disabled = current === 0;
+        if (nextBtn) nextBtn.disabled = current === total - 1;
+        var cap = images[current].caption;
+        captionEl.textContent = cap || "";
+        captionEl.style.display = cap ? "block" : "none";
+        ensureLoaded(current);
+    }
+
+    // No wraparound - stops at the first/last image, per spec.
+    function goTo(index) {
+        if (index < 0 || index >= total) return;
+        current = index;
+        update();
+    }
+
+    root.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowLeft") { e.preventDefault(); goTo(current - 1); }
+        else if (e.key === "ArrowRight") { e.preventDefault(); goTo(current + 1); }
+    });
+
+    // Swipe support (mobile).
+    var touchStartX = null;
+    viewport.addEventListener("touchstart", function (e) {
+        touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    viewport.addEventListener("touchend", function (e) {
+        if (touchStartX === null) return;
+        var dx = e.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(dx) > 40) goTo(dx < 0 ? current + 1 : current - 1);
+        touchStartX = null;
+    });
+
+    update();
+    return root;
+}
+
+// Fullscreen gallery viewer: navigate between images, zoom (wheel on
+// desktop, pinch on mobile), close with Escape / close button / backdrop
+// click.
+function openLightbox(images, startIndex) {
+    var total = images.length;
+    var current = startIndex || 0;
+    var scale = 1;
+
+    var overlay = document.createElement("div");
+    overlay.className = "lightbox-overlay";
+
+    var stage = document.createElement("div");
+    stage.className = "lightbox-stage";
+    // Clicks on the image/stage itself shouldn't close the modal - only
+    // clicking the backdrop (outside the stage) should.
+    stage.onclick = function (e) { e.stopPropagation(); };
+
+    var img = document.createElement("img");
+    img.className = "lightbox-img";
+
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "lightbox-close";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.onclick = close;
+
+    var prevBtn = null, nextBtn = null, counter = null;
+    if (total > 1) {
+        prevBtn = document.createElement("button");
+        prevBtn.className = "lightbox-nav lightbox-prev";
+        prevBtn.setAttribute("aria-label", "Previous image");
+        prevBtn.innerHTML = "&#8249;";
+        prevBtn.onclick = function (e) { e.stopPropagation(); go(current - 1); };
+
+        nextBtn = document.createElement("button");
+        nextBtn.className = "lightbox-nav lightbox-next";
+        nextBtn.setAttribute("aria-label", "Next image");
+        nextBtn.innerHTML = "&#8250;";
+        nextBtn.onclick = function (e) { e.stopPropagation(); go(current + 1); };
+
+        counter = document.createElement("div");
+        counter.className = "lightbox-counter";
+    }
+
+    function render() {
+        scale = 1;
+        img.style.transform = "scale(1)";
+        img.src = images[current].src;
+        img.alt = images[current].alt || "Screenshot";
+        if (counter) counter.textContent = "Image " + (current + 1) + " of " + total;
+        if (prevBtn) prevBtn.style.visibility = current === 0 ? "hidden" : "visible";
+        if (nextBtn) nextBtn.style.visibility = current === total - 1 ? "hidden" : "visible";
+    }
+
+    function go(index) {
+        if (index < 0 || index >= total) return;
+        current = index;
+        render();
+    }
+
+    function applyZoom(next) {
+        scale = Math.min(4, Math.max(1, next));
+        img.style.transform = "scale(" + scale + ")";
+    }
+
+    // Mouse wheel zoom (desktop).
+    stage.addEventListener("wheel", function (e) {
+        e.preventDefault();
+        applyZoom(scale - e.deltaY * 0.0015);
+    }, { passive: false });
+
+    // Pinch-to-zoom (mobile).
+    var pinchStartDist = null;
+    var pinchStartScale = 1;
+    function touchDistance(touches) {
+        var dx = touches[0].clientX - touches[1].clientX;
+        var dy = touches[0].clientY - touches[1].clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+    stage.addEventListener("touchstart", function (e) {
+        if (e.touches.length === 2) {
+            pinchStartDist = touchDistance(e.touches);
+            pinchStartScale = scale;
+        }
+    }, { passive: true });
+    stage.addEventListener("touchmove", function (e) {
+        if (e.touches.length === 2 && pinchStartDist) {
+            e.preventDefault();
+            applyZoom(pinchStartScale * (touchDistance(e.touches) / pinchStartDist));
+        }
+    }, { passive: false });
+    stage.addEventListener("touchend", function (e) {
+        if (e.touches.length < 2) pinchStartDist = null;
+    });
+
+    function onKeydown(e) {
+        if (e.key === "Escape") close();
+        else if (e.key === "ArrowLeft") go(current - 1);
+        else if (e.key === "ArrowRight") go(current + 1);
+    }
+
+    function close() {
+        document.removeEventListener("keydown", onKeydown);
+        overlay.remove();
+    }
+
+    // Clicking the dark backdrop (outside the stage) closes the viewer.
+    overlay.onclick = close;
+
+    stage.appendChild(img);
+    overlay.appendChild(stage);
+    if (prevBtn) overlay.appendChild(prevBtn);
+    if (nextBtn) overlay.appendChild(nextBtn);
+    if (counter) overlay.appendChild(counter);
+    overlay.appendChild(closeBtn);
+
+    document.addEventListener("keydown", onKeydown);
+    document.body.appendChild(overlay);
+    render();
+}
+
+// Called when the user clicks a numbered option directly. Shows the
+// option's actual question text as the user message (not the bare
+// number), sends a resolved query to the backend for a real answer, and
+// - if that step had its own screenshot - attaches it to the response.
+function selectListOption(number) {
+    var optionText = lastBotListItems[number];
+    if (!optionText) return;
+    var stepImage = lastBotStepImages[number] || null;
+    sendResolvedMessage(optionText, "Tell me more about: " + optionText, stepImage);
+}
+
+// If the user's message is just a bare number that matches one of the
+// bot's last numbered options, resolve it into the full option text (and
+// that step's own screenshot, if any) - both for what's shown in the
+// chat, and what's sent to the backend/LLM (as "Tell me more about: X")
+// so it gets real context instead of a lone digit. Otherwise, the typed
+// message is used as-is for both, with no step image.
+function resolveFollowUp(message) {
+    var trimmed = message.trim();
+    var numMatch = trimmed.match(/^(\d{1,2})[\.\)]?$/);
+    if (numMatch && lastBotListItems[numMatch[1]]) {
+        var optionText = lastBotListItems[numMatch[1]];
+        return {
+            display: optionText,
+            query: "Tell me more about: " + optionText,
+            stepImage: lastBotStepImages[numMatch[1]] || null
+        };
+    }
+    return { display: message, query: message, stepImage: null };
+}
+
+function setTyping(visible) {
+    document.getElementById("typing").style.display = visible ? "block" : "none";
+    document.getElementById("sendBtn").disabled = visible;
+    document.getElementById("message").disabled = visible;
+}
+ 
+async function sendMessage() {
+    var input = document.getElementById("message");
+    var rawMessage = input.value.trim();
+    if (!rawMessage) return;
+    input.value = "";
+
+    // If the user typed a bare number matching the last numbered list
+    // (e.g. "3"), show/send the actual option text instead of the digit,
+    // and carry over that step's own screenshot, if it has one.
+    var resolved = resolveFollowUp(rawMessage);
+    await sendResolvedMessage(resolved.display, resolved.query, resolved.stepImage);
+}
+
+// Shared send path for both typed messages and clicked numbered options.
+// displayText is what appears as the user's chat bubble; queryText is
+// what's actually sent to the backend (they're the same unless a
+// numbered option was resolved into its full question). stepImage, if
+// given, is that step's own screenshot - shown on the response bubble
+// alongside whatever images the backend itself returns for this answer.
+async function sendResolvedMessage(displayText, queryText, stepImage) {
+    var language = document.getElementById("languageSelect").value;
+
+    addMessage(displayText, "user");
+    setTyping(true);
+
+    try {
+        // Local development: open this page from Flask at
+        // http://127.0.0.1:5000/ so /chat is same-origin and CORS cannot
+        // block the request.
+        var response = await fetch("http://127.0.0.1:5000//chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: queryText,
+                language: language
+            }),
+            cache: "no-store"
+        });
+
+        var raw = await response.text();
+        var data;
+        try {
+            data = raw ? JSON.parse(raw) : {};
+        } catch (parseError) {
+            throw new Error("Server returned invalid JSON: " + raw.slice(0, 300));
+        }
+
+        if (!response.ok) {
+            throw new Error(data.error || ("Server returned HTTP " + response.status));
+        }
+
+        if (!data.response && !data.error) {
+            throw new Error("Server response did not contain a 'response' field.");
+        }
+
+        if (data.error) {
+            throw new Error(data.error);
+        }
+
+        var responseImages = (stepImage ? [stepImage] : []).concat(data.images || []);
+        addMessage(data.response, "bot", responseImages, data.step_images);
+
+    } catch (error) {
+        console.error("KoraLink /chat error:", error);
+        addMessage("Could not connect to the server. " + (error.message || "Please make sure the KoraLink server is running."), "error");
+    } finally {
+        setTyping(false);
+        document.getElementById("message").focus();
+    }
+}
+ 
+</script>
+ 
+</body>
+</html>
