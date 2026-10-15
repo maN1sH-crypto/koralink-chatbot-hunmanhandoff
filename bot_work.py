@@ -1,6 +1,7 @@
 import os
 import re
 import hashlib
+import threading
 import numpy as np
 from dotenv import load_dotenv
 from pymongo import MongoClient
@@ -12,10 +13,12 @@ from huggingface_hub import InferenceClient
 
 load_dotenv()
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-MONGO_URI = os.getenv("MONGO_URI")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "koralink")
+MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI")
+DATABASE_NAME = os.getenv("MONGODB_DB") or os.getenv("DATABASE_NAME", "koralink")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "knowledge")
 HF_TOKEN = os.getenv("HF_TOKEN")
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "local").strip().lower()
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu").strip() or "cpu"
 
 EMBEDDINGS_FILE = "data/question_embeddings.npy"
 EMBEDDINGS_HASH_FILE = "data/question_embeddings.npy.hash"
@@ -31,18 +34,44 @@ KEYWORD_CONTAINS_MAX_WORDS = 8
 if not MONGO_URI:
     raise RuntimeError("MONGO_URI is missing in your .env file.")
 
-if not HF_TOKEN:
-    raise RuntimeError("HF_TOKEN is missing in your .env file.")
+if EMBEDDING_PROVIDER not in {"local", "huggingface"}:
+    raise RuntimeError("EMBEDDING_PROVIDER must be 'local' or 'huggingface'.")
+if EMBEDDING_PROVIDER == "huggingface" and not HF_TOKEN:
+    raise RuntimeError("HF_TOKEN is required when EMBEDDING_PROVIDER=huggingface.")
 # ============================================================
-# HUGGING FACE EMBEDDING CLIENT
+# EMBEDDING PROVIDER
 # ============================================================
-hf_client = InferenceClient(
-    provider="hf-inference",
-    api_key=HF_TOKEN
+hf_client = (
+    InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
+    if EMBEDDING_PROVIDER == "huggingface"
+    else None
 )
+_local_model = None
+_local_model_lock = threading.Lock()
+
+
+def _get_local_model():
+    """Load the same Sentence Transformers model locally, only when needed."""
+    global _local_model
+    if _local_model is None:
+        with _local_model_lock:
+            if _local_model is None:
+                try:
+                    from sentence_transformers import SentenceTransformer
+                except ImportError as error:
+                    raise RuntimeError(
+                        "Local embeddings need sentence-transformers. Install the updated requirements, "
+                        "or set EMBEDDING_PROVIDER=huggingface to use the original provider."
+                    ) from error
+                _local_model = SentenceTransformer(MODEL_NAME, device=EMBEDDING_DEVICE)
+                print(f"Loaded local embedding model: {MODEL_NAME} ({EMBEDDING_DEVICE})")
+    return _local_model
+
+
 def encode_texts(texts):
     """
-    Generate normalized embeddings remotely through Hugging Face.
+    Generate normalized embeddings with the configured provider. Both providers
+    use the same model so the existing cosine matching and cache remain compatible.
 
     Input:
         texts: string or list of strings
@@ -55,6 +84,18 @@ def encode_texts(texts):
 
     if isinstance(texts, str):
         texts = [texts]
+
+    if EMBEDDING_PROVIDER == "local":
+        try:
+            vectors = _get_local_model().encode(
+                texts,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            return np.asarray(vectors, dtype=np.float32).reshape(len(texts), -1)
+        except Exception as error:
+            raise RuntimeError(f"Could not create local Sentence Transformers embeddings: {error}") from error
 
     embeddings = []
 
@@ -100,18 +141,18 @@ collection = db[COLLECTION_NAME]
 # LOAD FAQ DATA FROM MONGODB
 # ============================================================
 
-qa_pairs = list(
-    collection.find({
-        "$or": [
-            {"active": True},
-            {"active": "true"}
-        ]
-    })
-)
+# The knowledge dashboard treats records without an `active` field as active
+# (see knowledge_json() in app.py). Include those legacy/imported records here
+# too, while still excluding records explicitly marked inactive.
+ACTIVE_KNOWLEDGE_QUERY = {
+    "$or": [
+        {"active": True},
+        {"active": "true"},
+        {"active": {"$exists": False}},
+    ]
+}
 
-# If no FAQ entries have active=True, use all entries.
-if not qa_pairs:
-    qa_pairs = list(collection.find({}))
+qa_pairs = list(collection.find(ACTIVE_KNOWLEDGE_QUERY))
 
 if not qa_pairs:
     raise RuntimeError(
@@ -154,11 +195,25 @@ def normalize_step_images(item):
 
 def normalize_keywords(item):
     """Return clean lowercase keyword aliases."""
-    return [
+    values = item.get("keywords", []) or []
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, (list, tuple, set)):
+        values = []
+    aliases = [
         keyword.strip().lower()
-        for keyword in item.get("keywords", [])
+        for keyword in values
         if isinstance(keyword, str) and keyword.strip()
     ]
+    english_values = item.get("keywords_en", []) or []
+    if isinstance(english_values, str):
+        english_values = [english_values]
+    if isinstance(english_values, (list, tuple, set)):
+        aliases.extend(keyword.strip().lower() for keyword in english_values if isinstance(keyword, str) and keyword.strip())
+    question_en = item.get("question_en")
+    if isinstance(question_en, str) and question_en.strip():
+        aliases.append(question_en.strip().lower())
+    return aliases
 
 
 images = [normalize_images(item) for item in qa_pairs]
@@ -225,7 +280,7 @@ def load_or_create_embeddings():
     Load locally saved FAQ embeddings if still valid.
 
     Otherwise:
-    1. Call Hugging Face to create FAQ embeddings.
+    1. Use the configured provider to create FAQ embeddings.
     2. Save the embeddings locally.
     3. Save the content hash.
     """
@@ -261,8 +316,8 @@ def load_or_create_embeddings():
             print(f"Could not load embeddings cache: {error}")
 
     print(
-        f"Creating Hugging Face embeddings for "
-        f"{len(embedding_inputs)} FAQ entries..."
+        f"Creating FAQ embeddings with {EMBEDDING_PROVIDER} for "
+        f"{len(embedding_inputs)} entries..."
     )
 
     embeddings = encode_texts(embedding_inputs)
@@ -287,6 +342,66 @@ def load_or_create_embeddings():
 
 
 question_embeddings = load_or_create_embeddings()
+
+# Keep the in-memory FAQ aligned with MongoDB after an admin edits an entry.
+# Only newly added/changed question or keyword text needs a fresh embedding.
+_knowledge_reload_lock = threading.RLock()
+
+
+def reload_knowledge_base():
+    """Reload active FAQs and refresh vectors without restarting Flask."""
+    global qa_pairs, questions, answers, images, step_images, keywords
+    global normalized_questions, normalized_keywords, embedding_inputs
+    global question_embeddings
+
+    with _knowledge_reload_lock:
+        # Keep runtime reload behavior in sync with the startup query and the
+        # dashboard's default that missing `active` means active.
+        documents = list(collection.find(ACTIVE_KNOWLEDGE_QUERY))
+
+        old_vectors = {}
+        for text, vector in zip(embedding_inputs, question_embeddings):
+            old_vectors.setdefault(text, vector)
+
+        new_questions = [str(item.get("question", "")).strip() for item in documents]
+        new_keywords = [normalize_keywords(item) for item in documents]
+        new_inputs = [q + (" " + " ".join(k) if k else "") for q, k in zip(new_questions, new_keywords)]
+        vectors = []
+        missing_inputs = []
+        for text in new_inputs:
+            if text in old_vectors:
+                vectors.append(old_vectors[text])
+            else:
+                vectors.append(None)
+                if text not in missing_inputs:
+                    missing_inputs.append(text)
+
+        generated = {}
+        if missing_inputs:
+            new_vectors = encode_texts(missing_inputs)
+            generated = dict(zip(missing_inputs, new_vectors))
+        if vectors:
+            matrix = np.asarray([v if v is not None else generated[new_inputs[i]] for i, v in enumerate(vectors)], dtype=np.float32)
+        else:
+            dimension = question_embeddings.shape[1] if question_embeddings.ndim == 2 else 0
+            matrix = np.empty((0, dimension), dtype=np.float32)
+
+        qa_pairs = documents
+        questions = new_questions
+        answers = [str(item.get("answer", "")).strip() for item in documents]
+        images = [normalize_images(item) for item in documents]
+        step_images = [normalize_step_images(item) for item in documents]
+        keywords = new_keywords
+        normalized_questions = [normalize_text(question) for question in questions]
+        normalized_keywords = [[normalize_text(word) for word in group if word] for group in keywords]
+        embedding_inputs = new_inputs
+        question_embeddings = matrix
+
+        os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
+        np.save(EMBEDDINGS_FILE, matrix)
+        with open(EMBEDDINGS_HASH_FILE, "w", encoding="utf-8") as cache_file:
+            cache_file.write(embedding_inputs_hash())
+        return len(documents)
 
 
 # ============================================================
@@ -319,7 +434,7 @@ def cosine_scores(query_embedding):
 # FAQ SEARCH
 # ============================================================
 
-def top_faq_candidates(
+def _top_faq_candidates(
     user_question,
     top_k=5,
     min_score=0.85
@@ -445,6 +560,12 @@ def top_faq_candidates(
     ]
 
     return candidates
+
+
+def top_faq_candidates(user_question, top_k=5, min_score=0.85):
+    """Search a consistent FAQ snapshot while the admin may be reindexing."""
+    with _knowledge_reload_lock:
+        return _top_faq_candidates(user_question, top_k, min_score)
 
 
 # ============================================================

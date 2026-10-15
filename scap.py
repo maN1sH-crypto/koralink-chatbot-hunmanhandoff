@@ -1,16 +1,11 @@
 from bs4 import BeautifulSoup
-from deep_translator import GoogleTranslator
-from deep_translator.exceptions import TooManyRequests
 import re
 import requests
 import numpy as np
 import bot_work as bot  
 import groq_client
-import pdf_source
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-gotr = GoogleTranslator(source='auto', target='en')
 
 # --------------------------------------------------
 # web scraping
@@ -30,20 +25,7 @@ def split_text(text, size=300):
         chunks.append(chunk)
     return chunks
 
-def safe_translate(text):
-    try:
-        translator = GoogleTranslator(source="auto", target="en")
-        return translator.translate(text)
-    except TooManyRequests:
-        print("Google Translate rate limit reached. Using original website text.")
-        return text
-    except Exception as error:
-        print(f"Translation failed: {error}. Using original website text.")
-        return text
-
-
 website_text = scrape_page("https://koralink.org/en")
-website_text = safe_translate(website_text)
 website_chunks = split_text(website_text)
 
 # test_hf uses encode_texts() instead of bot.embedding_model.encode()
@@ -130,10 +112,6 @@ def retrieve_all_candidates(user_message):
     website_candidates = top_website_chunks(user_message, top_k=3, min_score=0.2)
     for chunk, score in website_candidates:
         candidates.append(("Website", chunk, score, [], {}))
-
-    pdf_candidates = pdf_source.top_pdf_chunks(user_message, top_k=3, min_score=0.2)
-    for chunk, score in pdf_candidates:
-        candidates.append(("PDF", chunk, score, [], {}))
 
     candidates.sort(key=lambda c: c[2], reverse=True)
     return candidates, faq_candidates

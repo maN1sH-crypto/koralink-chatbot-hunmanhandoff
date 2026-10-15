@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .env
 .venv/
+/data/backups/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
