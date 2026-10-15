@@ -13,6 +13,7 @@ Flask chatbot and live human support system for the KoraLink website. The projec
 | `database.py` | Import or replace the MongoDB knowledge collection from `koralink_new.json`, with a recoverable export before replacement. |
 | `create_agent.py` | Create or update support-agent and admin logins. |
 | `index.html` | Customer chat interface. |
+| `static/widget.js` | Embeddable launcher that opens the existing customer chat in a responsive iframe. |
 | `templates/agent_dashboard.html`, `static/agent.js`, `static/agent.css` | Calling-center dashboard and its browser behavior/styles. |
 | `templates/knowledge_manager.html` | Admin-only English knowledge editor. Changes save to MongoDB. |
 | `koralink_new.json` | Current English source knowledge file for initial import/replacement. |
@@ -143,6 +144,25 @@ The checked-in `index.html` currently has a temporary ngrok URL in `window.KORAL
 Use the actual deployed backend URL; `api.client-domain.example` is only an example. Then publish the updated frontend to Netlify and set the backend's `FRONTEND_ORIGIN` to the exact Netlify site origin, such as `https://client-site.netlify.app`. If the client also opens the dashboard through the backend URL, the dashboard is already served by Flask at `/agent` and the knowledge manager at `/knowledge`.
 
 For a temporary local demo, the frontend's API URL must point to the current ngrok HTTPS URL, and Flask's `FRONTEND_ORIGIN` must include the Netlify origin. The Flask process and ngrok tunnel must remain running. ngrok URLs are temporary and should not be used as the production backend address.
+
+### Embed the chatbot on another website
+
+After deploying the frontend files to Netlify, add this snippet to the client website where the chat button should appear. Replace both example URLs with the real addresses:
+
+```html
+<script
+  src="https://YOUR-FRONTEND-SITE.netlify.app/static/widget.js"
+  data-chat-url="https://YOUR-FRONTEND-SITE.netlify.app/"
+  data-api-url="https://YOUR-BACKEND-SERVICE.example.com"
+  defer
+></script>
+```
+
+`data-chat-url` is the deployed `index.html` address, and `data-api-url` is the Flask backend address. The loader creates the floating button; clicking it opens the existing chatbot in a mobile-friendly panel. The same chat page continues to handle bot messages, human handoff, live-agent messages, and attachments. Do not use a temporary ngrok address for a permanent website integration.
+
+The browser makes API and Socket.IO requests from the origin of `data-chat-url` (for example, the Netlify site), so that exact origin must be included in the backend's comma-separated `FRONTEND_ORIGIN` setting. Restart the Flask service after changing the setting. The website where the snippet is pasted does not need to host the Flask app; it only needs to allow the script and iframe to load from their configured URLs.
+
+If both the chat page and backend are served by the same Flask domain, use that domain for all three URLs, for example `https://support.example.com/static/widget.js`, `https://support.example.com/`, and `https://support.example.com`.
 
 ## Local development
 
