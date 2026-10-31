@@ -213,6 +213,18 @@ body {
     flex-shrink: 0;
 }
 
+.support-wait-counter {
+    display: none;
+    padding: 9px 16px;
+    background: #eff6ff;
+    border-top: 1px solid #dbeafe;
+    color: #1e3a8a;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-line;
+    flex-shrink: 0;
+}
+
 .chat-input {
     display: flex;
     align-items: center;
@@ -579,8 +591,8 @@ html.koralink-widget-embed .chat-container {
 <button class="chat-btn" onclick="toggleChat()"><img src="https://res.cloudinary.com/tdbya9oh/image/upload/v1790333977/bot.png" style="height: 40px; width: 40; border-radius: 50%; margin-top: 7px;"></button>
  
 <div class="chat-container" id="chatContainer">
- 
-<div class="chat-header">
+
+<!--<div class="chat-header">
 
     <div style="display:flex; align-items:center; gap:10px;">
         <img src="https://res.cloudinary.com/tdbya9oh/image/upload/v1790333977/bot.png"
@@ -598,11 +610,13 @@ html.koralink-widget-embed .chat-container {
 
     </div>
 
-</div>
+</div> -->
  
     <div class="chat-box" id="chatBox">
         <div class="bot-message">Hello! How can I help you today? <a href="https://www.djyh.rw">KoraLink Official Website</a></div>
     </div>
+
+    <div class="support-wait-counter" id="supportWaitCounter" role="timer" aria-live="off"></div>
  
     <div class="typing" id="typing">Bot is typing...</div>
  
@@ -620,7 +634,7 @@ html.koralink-widget-embed .chat-container {
  
 </div>
  <script>
-  window.KORALINK_API_URL = "https://morally-chaplain-footrest.ngrok-free.dev";
+  window.KORALINK_API_URL = "";
 </script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
@@ -706,7 +720,56 @@ var conversationStatus = null;
 var customerSocket = null;
 var historyLoaded = false;
 var customerPollTimer = null;
+var supportWaitTimer = null;
+var supportWaitEstimateDeadline = null;
+var supportWaitFallbackDeadline = null;
 var renderedCustomerMessageIds = new Set();
+
+function formatWaitCountdown(milliseconds) {
+    var totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+    var minutes = Math.floor(totalSeconds / 60);
+    var seconds = totalSeconds % 60;
+    return String(minutes).padStart(2, "0") + ":" + String(seconds).padStart(2, "0");
+}
+
+function parseServerUtc(value) {
+    if (!value) return NaN;
+    return Date.parse(/[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : value + "Z");
+}
+
+function renderSupportWaitCounter() {
+    var counter = document.getElementById("supportWaitCounter");
+    if (!counter || !supportWaitFallbackDeadline) return;
+    var estimateText = supportWaitEstimateDeadline
+        ? "Estimated wait: " + formatWaitCountdown(supportWaitEstimateDeadline - Date.now())
+        : "Estimated wait: currently unavailable";
+    var fallbackText = "If no supervisor joins, AI support resumes in " +
+        formatWaitCountdown(supportWaitFallbackDeadline - Date.now());
+    counter.textContent = estimateText + "\n" + fallbackText;
+}
+
+function syncSupportWaitCounter(conversation) {
+    var counter = document.getElementById("supportWaitCounter");
+    if (!counter) return;
+    var startedAt = conversation && conversation.status === "waiting_human"
+        ? parseServerUtc(conversation.handoff_requested_at) : NaN;
+    if (!Number.isFinite(startedAt)) {
+        counter.style.display = "none";
+        supportWaitEstimateDeadline = null;
+        supportWaitFallbackDeadline = null;
+        if (supportWaitTimer) clearInterval(supportWaitTimer);
+        supportWaitTimer = null;
+        return;
+    }
+    var hasEstimate = conversation.estimated_wait_seconds !== null && conversation.estimated_wait_seconds !== undefined;
+    var estimateSeconds = hasEstimate ? Number(conversation.estimated_wait_seconds) : NaN;
+    supportWaitEstimateDeadline = hasEstimate && Number.isFinite(estimateSeconds) && estimateSeconds >= 0
+        ? startedAt + estimateSeconds * 1000 : null;
+    supportWaitFallbackDeadline = startedAt + 2 * 60 * 1000;
+    counter.style.display = "block";
+    renderSupportWaitCounter();
+    if (!supportWaitTimer) supportWaitTimer = setInterval(renderSupportWaitCounter, 1000);
+}
 
 function customerApiBase() {
     var localHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
@@ -716,7 +779,7 @@ function customerApiBase() {
     if (configuredApiUrl) return configuredApiUrl.replace(/\/+$/, "");
     if (localHost && window.location.port !== "5000") return "http://127.0.0.1:5000";
     if (localHost) return "";
-    throw new Error("Backend URL is missing. Set window.KORALINK_API_URL to your active ngrok HTTPS URL, or open this page with ?api=https://your-ngrok-domain.");
+    throw new Error("Backend URL is missing. Set window.KORALINK_API_URL to your HTTPS backend URL, or open this page with ?api=https://your-backend-domain.");
 }
 
 async function customerApi(path, options) {
@@ -760,12 +823,14 @@ function connectCustomerSocket() {
     customerSocket.on("conversation_claimed", function (event) {
         if (event.conversation && event.conversation.id === conversationId) {
             conversationStatus = event.conversation.status;
+            syncSupportWaitCounter(event.conversation);
             syncCustomerAttachmentButton();
         }
     });
     customerSocket.on("conversation_closed", function (event) {
         if (event.conversation && event.conversation.id === conversationId) {
             conversationStatus = "closed";
+            syncSupportWaitCounter(event.conversation);
             syncCustomerAttachmentButton();
             clearCustomerAttachmentPreviews();
         }
@@ -786,6 +851,7 @@ async function pollCustomerConversation() {
         var history = await customerApi("/api/customer/conversation/" + encodeURIComponent(conversationId) +
             "?customer_id=" + encodeURIComponent(customerId));
         conversationStatus = history.conversation.status;
+        syncSupportWaitCounter(history.conversation);
         syncCustomerAttachmentButton();
         if (conversationStatus === "closed") clearCustomerAttachmentPreviews();
         history.messages.forEach(function (message) {
@@ -847,6 +913,7 @@ async function startCustomerSession() {
     customerId = session.customer_id;
     conversationId = session.conversation.id;
     conversationStatus = session.conversation.status;
+    syncSupportWaitCounter(session.conversation);
     historyLoaded = true;
     saveCustomerSession();
     connectCustomerSocket();
@@ -865,6 +932,7 @@ async function ensureCustomerSession() {
             var history = await customerApi("/api/customer/conversation/" + encodeURIComponent(conversationId) +
                 "?customer_id=" + encodeURIComponent(customerId));
             conversationStatus = history.conversation.status;
+            syncSupportWaitCounter(history.conversation);
             syncCustomerAttachmentButton();
             history.messages.forEach(function (message) {
                 if (message.sender_type === "customer") addMessage(message.message, "user", null, null, message.id,
@@ -1356,6 +1424,7 @@ async function sendResolvedMessage(displayText, queryText, stepImage) {
         });
         conversationId = data.conversation.id;
         conversationStatus = data.conversation.status;
+        syncSupportWaitCounter(data.conversation);
         syncCustomerAttachmentButton();
         saveCustomerSession();
         joinCustomerRoom();

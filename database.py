@@ -234,34 +234,6 @@ def upsert_documents(collection, documents):
     print("\n======================================")
     print("UPLOADING KNOWLEDGE")
     print("======================================")
-
-
-def replace_documents(collection, documents):
-    """Replace only the knowledge collection, keeping a recoverable backup."""
-    if not documents:
-        raise RuntimeError("Refusing to replace MongoDB knowledge with an empty JSON file.")
-
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = BACKUP_DIR / f"knowledge_mongodb_backup_{timestamp}.json"
-    existing = list(collection.find({}))
-    backup_file.write_text(json_util.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"Backed up {len(existing)} existing knowledge records to: {backup_file}")
-
-    try:
-        collection.delete_many({})
-        collection.insert_many(documents, ordered=True)
-    except Exception:
-        print("Replacement failed; restoring the previous knowledge records from memory...")
-        collection.delete_many({})
-        if existing:
-            collection.insert_many(existing, ordered=True)
-        print(f"Previous records restored. Backup retained at: {backup_file}")
-        raise
-
-    print(f"Replaced knowledge collection with {len(documents)} JSON records.")
-    print(f"Backup retained at: {backup_file}")
-
     inserted = 0
     updated = 0
     failed = 0
@@ -348,6 +320,33 @@ def replace_documents(collection, documents):
     print(f"Failed              : {failed}")
 
     print("======================================")
+
+
+def replace_documents(collection, documents):
+    """Replace only the knowledge collection, keeping a recoverable backup."""
+    if not documents:
+        raise RuntimeError("Refusing to replace MongoDB knowledge with an empty JSON file.")
+
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = BACKUP_DIR / f"knowledge_mongodb_backup_{timestamp}.json"
+    existing = list(collection.find({}))
+    backup_file.write_text(json_util.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Backed up {len(existing)} existing knowledge records to: {backup_file}")
+
+    try:
+        collection.delete_many({})
+        collection.insert_many(documents, ordered=True)
+    except Exception:
+        print("Replacement failed; restoring the previous knowledge records from memory...")
+        collection.delete_many({})
+        if existing:
+            collection.insert_many(existing, ordered=True)
+        print(f"Previous records restored. Backup retained at: {backup_file}")
+        raise
+
+    print(f"Replaced knowledge collection with {len(documents)} JSON records.")
+    print(f"Backup retained at: {backup_file}")
 
 
 # ============================================================

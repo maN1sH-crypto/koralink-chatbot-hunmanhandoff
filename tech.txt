@@ -1,0 +1,171 @@
+KORALINK CHATBOT AND SUPPORT DASHBOARD
+Technology and system overview
+
+Purpose
+This document lists the technologies and main technical components used in the current project, where they are used, and why they are included. It describes the code as it currently exists; it is not a claim that production hosting or a security audit is complete.
+
+END-TO-END: HOW A CHAT MESSAGE GETS AN ANSWER
+
+1. The browser opens index.html, creates or restores a customer/conversation ID, and sends the message to Flask at POST /api/customer/message. Flask stores the incoming message in MongoDB so the conversation history is retained.
+
+2. Flask checks the conversation state and whether the message asks for a human. If it is a human request, the FAQ search is skipped and the conversation enters the waiting_human queue; otherwise the language layer detects the input language and prepares an English query.
+
+3. bot_work.py encodes the English query with the local MiniLM model and compares it with the cached FAQ question/keyword vectors using cosine similarity. It also checks exact questions and keyword forms, which helps short queries such as “login” match a configured FAQ keyword.
+
+4. scap.py ranks FAQ matches and website text chunks. If the best FAQ match is sufficiently strong (score 0.55 or above), it returns that stored FAQ answer and its images directly; this is faster and preserves the reviewed wording.
+
+5. If no FAQ is strong enough, the best FAQ and website candidates are supplied as context to the language-model fallback chain: Groq first, Gemini second, and OpenRouter third. The model is instructed to use that context for KoraLink-specific facts; if it still cannot answer, the chatbot uses its configured fallback message.
+
+6. If the customer asked in another language, the answer and image captions/alt text are translated back into that language while image URLs are kept unchanged. Flask stores the answer and media metadata in MongoDB and returns them to the browser as JSON.
+
+7. index.html renders the answer in the chat, shows any attached FAQ images, and appends the satisfaction question. Messages are delivered through the API response and kept in the stored conversation history.
+
+8. If the user asks for a supervisor, Flask saves a waiting_human conversation and notifies the agent dashboard. An agent claims it from the queue; Socket.IO sends live messages, with three-second polling as a fallback. If no agent claims it within two minutes, the next poll switches it back to AI mode and displays the timeout notice.
+
+HOW KNOWLEDGE-BASE IMAGES APPEAR IN CHAT
+
+Knowledge records can include an images list (or an older single image field) and optional step_images keyed to numbered answer steps. The knowledge manager normalizes image URLs into records with src, alt, and caption fields; the URL points to the image host, for example an approved public image URL, while the descriptive text is stored with the FAQ.
+
+For a strong FAQ match, the backend returns the saved answer and the image metadata together. For a less certain match that goes through LLM-generated answer text, the current retrieval path returns the generated answer without the candidate FAQ's images; a numbered step image can still be added by the browser when a customer clicks that step.
+
+The browser's addMessage() function adds the text bubble, then calls createChatGallery() when the response contains images. The gallery lazy-loads the current image and nearby images, displays alt text/captions, provides carousel controls for multiple images, supports mobile swipe, and opens a fullscreen viewer when an image is clicked; a placeholder is shown if an image URL fails.
+
+Images attached to numbered answer steps are stored separately in step_images. When the user clicks a numbered step, the browser sends that step's text to the backend and places the step's image alongside the resulting answer, so the relevant screenshot appears at the point it is needed.
+
+Live support attachments are a separate feature from knowledge-base screenshots. During a human conversation, customer/agent uploads are stored in GridFS and fetched from a protected conversation attachment endpoint; they are removed when the support conversation closes.
+
+BACKEND AND API
+
+Python
+The backend, chatbot retrieval code, database utilities, and agent-account utility are written in Python. Python also runs the local language-embedding model and connects the application to external language-model APIs.
+
+Flask
+Flask runs the web application in app.py. It serves the chatbot and agent/admin pages and provides the JSON API routes for messages, conversations, login, knowledge editing, and attachments.
+
+Flask REST/JSON API
+The browser sends HTTP requests such as POST /api/customer/message and GET /api/customer/conversation/<id>. JSON lets the independently hosted frontend communicate with the Python backend using a simple, widely supported interface.
+
+Flask-CORS
+Cross-Origin Resource Sharing allows the Netlify-hosted chatbot page to call the Flask API on another domain. FRONTEND_ORIGIN configures which browser origins are allowed; production should use the exact trusted site domains rather than a wildcard.
+
+Flask-SocketIO and Socket.IO
+Socket.IO sends live events such as new messages, an agent joining, and queue updates between the browser and Flask. It is used for responsive agent/customer chat; the app also polls for updates as a fallback if a live socket is unavailable.
+
+simple-websocket
+This package provides WebSocket support used by the Socket.IO stack. WebSockets allow the server to push new chat events without the browser repeatedly reloading the page.
+
+Werkzeug
+Werkzeug is Flask's underlying web toolkit. The project also uses its password-hashing and password-checking functions so agent passwords are not stored as plain text.
+
+python-dotenv
+This package loads local configuration from the private .env file. It keeps database credentials, API keys, and the Flask secret outside the source code; .env must never be committed or sent to a client.
+
+DATABASE AND FILE STORAGE
+
+MongoDB / MongoDB Atlas
+MongoDB stores knowledge-base entries, agents, conversations, and messages. Atlas is the hosted MongoDB option described in the setup documentation; it keeps data available to both the Netlify frontend and the Flask server.
+
+PyMongo
+PyMongo is the Python driver used by app.py, database.py, and bot_work.py to read and write MongoDB documents, create indexes, claim queue items safely, and manage connections.
+
+MongoDB GridFS
+GridFS stores customer/agent image attachments in MongoDB rather than putting large image files directly inside message documents. The application validates image types and size and deletes conversation attachments when a support conversation closes.
+
+MongoDB ObjectId and indexes
+ObjectIds identify database records, while indexes speed up common lookups for conversation status, agent ownership, message history, and agent email. An atomic MongoDB update ensures only one agent can claim a waiting conversation.
+
+cloudinary
+use free images uploading tool on cloud so we don't need to save the images in local system
+
+AI, KNOWLEDGE SEARCH, AND LANGUAGE
+
+Sentence Transformers
+The sentence-transformers Python library turns each knowledge question and each incoming English search query into a numeric vector. Similar meanings can then match even when the wording differs.
+
+all-MiniLM-L6-v2
+This is the configured Sentence Transformers model. It runs locally on the backend by default, so embedding queries do not require a paid Hugging Face inference call; the model must be downloaded on first use and consumes backend memory and CPU.
+
+PyTorch
+PyTorch is the machine-learning runtime used by Sentence Transformers to load and execute the local MiniLM model. EMBEDDING_DEVICE currently defaults to cpu; a compatible configured accelerator can be selected if the host supports it.
+
+NumPy
+NumPy stores and compares embedding vectors and reads/writes the local .npy embedding cache. Cosine similarity is used to rank semantically related knowledge questions.
+
+Keyword and semantic retrieval
+bot_work.py combines direct question/keyword matching with semantic-vector similarity. This helps short keyword queries and paraphrased questions retrieve relevant FAQs; scap.py combines FAQ candidates with relevant text from the KoraLink website.
+
+Embedding cache (.npy and .hash)
+data/question_embeddings.npy stores precomputed question vectors, and its .hash file records the source question/keyword signature. Reusing the cache avoids recomputing every vector on each ordinary server start; the cache can be regenerated if its source changes or the file is removed.
+
+Groq API
+groq_client.py uses Groq's chat-completions API for language detection/translation and for answer generation when retrieved knowledge needs a natural-language response. The model name is configured in groq_client.py; provider quotas and pricing apply.
+
+Google Gemini API
+The Google Gen AI client is configured as a provider fallback in groq_client.py. It can be used for language tasks or answer generation when the primary provider fails, subject to API key, service availability, and quota.
+
+Automatic language handling
+The language layer detects the user's language, translates the query into English for the English knowledge base, then translates the answer and image captions back into the user's language. This uses configured LLM providers rather than Google Translate, so it still depends on provider quotas, latency, and usage charges.
+
+Website retrieval: Requests and Beautiful Soup 4
+scap.py requests the KoraLink website and Beautiful Soup extracts readable page text, which is split into chunks and embedded for retrieval. This is a secondary source beside the FAQ database; the current scraper requests the page with TLS certificate verification disabled, which should be corrected before production use.
+
+FRONTEND AND USER INTERFACE
+
+HTML5
+index.html contains the customer chatbot interface, and templates/ contains the agent dashboard and knowledge editor. HTML defines the page structure and controls used by the customer, support staff, and administrator.
+
+CSS3
+CSS in index.html and static/agent.css controls layout, colors, responsive behavior, chat bubbles, dashboard panels, and mobile presentation. The customer chat is designed to fit inside a standalone page or an embedded iframe.
+
+JavaScript (browser-native)
+Browser JavaScript handles message submission, history rendering, attachments, customer session IDs, Socket.IO events, and dashboard interactions. It uses the browser Fetch API to call Flask's JSON endpoints.
+
+
+Web Storage
+The customer chat stores its customer and conversation identifiers in sessionStorage, with a compatibility migration from localStorage. The agent dashboard stores its login session token in localStorage; protect the dashboard against cross-site scripting and use HTTPS in deployment.
+
+Polling and browser timers
+The customer and dashboard poll conversation/queue APIs about every three seconds as a fallback to live Socket.IO. The waiting display uses a one-second browser timer to animate the estimate and the two-minute return-to-AI countdown; Flask/MongoDB determine the real conversation status.
+
+KNOWLEDGE AND SUPPORT WORKFLOW
+
+JSON knowledge source
+koralink_new.json is the source file used for first-time import or deliberate full replacement of the knowledge collection. Each record can contain the English question, answer, keywords, and image metadata/URLs.
+
+Knowledge manager
+templates/knowledge_manager.html provides the authenticated web editor for searching, creating, editing, deactivating, and deleting MongoDB knowledge records. Normal edits save directly to MongoDB and refresh the live retrieval data, so small edits do not require uploading the entire JSON again.
+
+Conversation state machine
+MongoDB stores each support conversation with a status such as bot_active, waiting_human, human_active, or closed. These states control which messages are accepted, whether an agent can claim the chat, and when the customer returns to AI support.
+
+Customer satisfaction and supervisor handoff
+After an AI answer the chatbot asks whether the answer solved the issue. If the user says no, it asks whether they want a supervisor; yes starts the same support queue flow. A direct request to speak to a human still starts handoff immediately.
+
+Estimated wait and two-minute fallback
+The backend estimates queue time from waiting requests, online agents, and recent completed support durations, using an approximate ten-minute fallback until it has timing history. While waiting, the browser counts down from the estimate and from the two-minute timeout; on the next customer/dashboard poll after that deadline (normally within about three seconds), Flask returns the conversation to AI mode and sends a notice if no agent claimed it.
+
+Temporary image attachments
+Customer and agent attachments are limited to supported image formats and a 5 MB maximum. GridFS holds the image during the live conversation, and the backend purges it when the agent closes the conversation.
+
+CONFIGURATION, DEVELOPMENT, AND DEPLOYMENT
+
+Environment variables and .env
+.env.example documents the settings needed by the backend, including MongoDB, model-provider keys, allowed frontend origins, and the server port. Each deployment needs its own private .env or hosting-provider environment settings; do not publish actual secrets.
+
+Virtual environment and pip
+Python's venv isolates this project's Python packages from other projects on a computer. pip installs the packages listed in requirements.txt, making setup more repeatable across developer and client machines.
+
+ngrok
+ngrok creates a temporary HTTPS tunnel from the public internet to the developer's local Flask server for mobile/client demos. It is for testing only; the computer, Flask process, and tunnel must stay online, and production needs a stable backend host and URL.
+
+Git and GitHub
+Git tracks source changes and supports restoring/reviewing versions; GitHub hosts the remote repository for collaboration and backup. Never commit .env, credentials, or customer data.
+
+Current server and production note
+Running python app.py starts Flask-SocketIO with the development Werkzeug server, suitable for local development and demos. Production deployment still needs a persistent host and a production server/runtime configured for Flask-SocketIO WebSockets, plus HTTPS, restricted CORS, monitored logs, database backups, and verified retention/security settings.
+
+DEPENDENCY CHECK BEFORE A CLEAN CLIENT INSTALL
+
+groq_client.py imports the OpenAI Python SDK for the OpenRouter connection, but openai is not listed as a direct dependency in the current requirements.txt. The source imports google-genai, while requirements.txt also includes google-generativeai, the older package. Verify and align these entries before using a clean client machine so installation does not depend on indirect packages already being present.
+
+No actual API keys, database passwords, customer records, or private tunnel addresses are included in this file.

@@ -1,5 +1,6 @@
 import os,re,uuid,io
-from datetime import datetime,timezone
+from statistics import median
+from datetime import datetime,timedelta,timezone
 from urllib.parse import urlsplit
 from bson import ObjectId
 from flask import Flask,request,jsonify,render_template,send_file,Response
@@ -30,14 +31,55 @@ convs=db.conversations; msgs=db.messages; agents=db.agents
 knowledge=db[os.getenv('COLLECTION_NAME','knowledge')]
 attachments=GridFSBucket(db,bucket_name='chat_attachments')
 convs.create_index([('status',1),('created_at',1)]); convs.create_index([('agent_id',1),('status',1)]); msgs.create_index([('conversation_id',1),('created_at',1)]); agents.create_index('email',unique=True)
-PATTERNS=[r'\btalk to (a|an)?\s*human\b',r'\btalk to (a|an)?\s*agent\b',r'\bspeak to (a|an)?\s*(human|agent)\b',r'\bconnect me (to|with) (a|an)?\s*(human|agent)\b',r'\bi want (to )?(talk|speak) (to|with) (a|an)?\s*(human|agent)\b',r'\bi need (a|an)?\s*(human|agent)\b',r'\bhuman support\b',r'\blive support\b',r'\breal person\b',r'\blive person\b',r'\brepresentative\b',r'\bcustomer (support|service)\b',r'\binsaan se baat\b',r'\bagent se baat\b']
+PATTERNS=[r'\btalk\s+(?:(?:to|with)\s+)?(?:(?:a|an)\s+)?(?:human|agent)\b',r'\bspeak\s+(?:(?:to|with)\s+)?(?:(?:a|an)\s+)?(?:human|agent)\b',r'\bconnect me (?:to|with)\s+(?:(?:a|an)\s+)?(?:human|agent)\b',r'\bi want (?:to )?(?:talk|speak)\s+(?:(?:to|with)\s+)?(?:(?:a|an)\s+)?(?:human|agent)\b',r'\bi need\s+(?:(?:a|an)\s+)?(?:human|agent)\b',r'\bhuman support\b',r'\blive support\b',r'\breal person\b',r'\blive person\b',r'\brepresentative\b',r'\bcustomer (support|service)\b',r'\binsaan se baat\b',r'\bagent se baat\b']
 def now(): return datetime.now(timezone.utc)
 def clean(x,maxlen=2000): return x.strip()[:maxlen] if isinstance(x,str) else ''
 def wants_human(x): return any(re.search(p,x.lower()) for p in PATTERNS)
-def cj(d): return {'id':str(d['_id']),'customer_id':d.get('customer_id'),'status':d.get('status'),'agent_id':d.get('agent_id'),'created_at':d.get('created_at').isoformat() if d.get('created_at') else None,'updated_at':d.get('updated_at').isoformat() if d.get('updated_at') else None,'closed_at':d.get('closed_at').isoformat() if d.get('closed_at') else None}
+def affirmative(x): return bool(re.match(r'^(yes|yeah|yep|sure|ok|okay|yego)\b',x.strip().lower()))
+def negative(x): return bool(re.match(r'^(no|nope|nah|oya)\b',x.strip().lower()))
+def cj(d): return {'id':str(d['_id']),'customer_id':d.get('customer_id'),'status':d.get('status'),'agent_id':d.get('agent_id'),'created_at':d.get('created_at').isoformat() if d.get('created_at') else None,'updated_at':d.get('updated_at').isoformat() if d.get('updated_at') else None,'closed_at':d.get('closed_at').isoformat() if d.get('closed_at') else None,'handoff_requested_at':d.get('handoff_requested_at').isoformat() if d.get('handoff_requested_at') else None,'estimated_wait_seconds':d.get('estimated_wait_seconds')}
 def mj(d): return {'id':str(d['_id']),'conversation_id':d['conversation_id'],'sender_type':d['sender_type'],'sender_id':d.get('sender_id'),'message':d['message'],'payload':d.get('payload',{}),'created_at':d.get('created_at').isoformat() if d.get('created_at') else None}
 def save(cid,typ,text,sid=None,payload=None):
  d={'conversation_id':str(cid),'sender_type':typ,'sender_id':sid,'message':text,'payload':payload or {},'created_at':now()}; r=msgs.insert_one(d); d['_id']=r.inserted_id; convs.update_one({'_id':ObjectId(cid)},{'$set':{'updated_at':now()}}); return d
+def estimate_wait_minutes(conversation):
+ # Estimate from recent agent handling times; use a clearly approximate 10-minute
+ # fallback until this deployment has enough conversations with claimed_at data.
+ durations=[]
+ for past in convs.find({'status':'closed','claimed_at':{'$exists':True},'closed_at':{'$exists':True}},{'claimed_at':1,'closed_at':1}).sort('closed_at',-1).limit(50):
+  duration=(past['closed_at']-past['claimed_at']).total_seconds()/60
+  if 1 <= duration <= 120: durations.append(duration)
+ average_minutes=median(durations) if durations else 10
+ online_agents=list(agents.find({'active':True,'online':True},{'_id':1}))
+ if not online_agents: return None
+ agent_ids=[str(agent['_id']) for agent in online_agents]
+ position=convs.count_documents({'status':'waiting_human','created_at':{'$lt':conversation['created_at']}})+1
+ active_count=convs.count_documents({'status':'human_active','agent_id':{'$in':agent_ids}})
+ busy_workload=max(1,active_count+position-1)
+ return max(1,round(busy_workload*average_minutes/len(online_agents)))
+def waiting_reply(conversation,language='English'):
+ minutes=estimate_wait_minutes(conversation)
+ if minutes is None:
+  message='Your request is in the support queue. No agents are online right now, so an estimated wait time is not available yet.'
+ else:
+  message=f'Your request is in the support queue. The estimated wait is about {minutes} minute'+('s' if minutes!=1 else '')+'. This is an approximate estimate based on recent support response times and the current queue.'
+ if language.lower()!='english': message=groq_client.translate_text(message,language)
+ return message
+def expire_handoff(cid):
+ cutoff=now()-timedelta(minutes=2)
+ d=convs.find_one_and_update({'_id':ObjectId(cid),'status':'waiting_human','handoff_requested_at':{'$lte':cutoff}},{'$set':{'status':'bot_active','updated_at':now()},'$unset':{'handoff_requested_at':'','estimated_wait_seconds':''}},return_document=ReturnDocument.AFTER)
+ if not d: return False
+ message='Sorry, no supervisor or support agent joined within two minutes. You can continue with AI support, or say “talk to a human” to try connecting again.'
+ language=d.get('reply_language','English')
+ if language.lower()!='english':
+  try: message=groq_client.translate_text(message,language)
+  except Exception: app.logger.exception('Could not translate the human-handoff timeout notice')
+ notice=save(cid,'system',message)
+ emit_conv(cid,'new_message',mj(notice)); socketio.emit('queue_updated',{},room='agents')
+ return True
+def expire_due_handoffs():
+ cutoff=now()-timedelta(minutes=2)
+ for d in convs.find({'status':'waiting_human','handoff_requested_at':{'$lte':cutoff}},{'_id':1}).limit(100):
+  expire_handoff(str(d['_id']))
 def purge_conversation_attachments(cid):
  for f in db['chat_attachments.files'].find({'metadata.conversation_id':str(cid)},{'_id':1}):
   try: attachments.delete(f['_id'])
@@ -70,6 +112,7 @@ def customer_session():
 def customer_history(cid):
  cust=clean(request.args.get('customer_id','')); d=getconv(cid,cust)
  if not d:return jsonify(error='Conversation not found'),404
+ expire_handoff(cid); d=getconv(cid,cust)
  return jsonify(conversation=cj(d),messages=[mj(x) for x in msgs.find({'conversation_id':cid}).sort('created_at',1).limit(500)])
 
 @app.post('/api/customer/message')
@@ -87,23 +130,49 @@ def customer_message():
  cm=save(cid,'customer',text,cust); emit_conv(cid,'new_message',mj(cm))
  if d['status']=='human_active': return jsonify(customer_id=cust,conversation=cj(d),mode='human',response=None,images=[],step_images={})
  if d['status']=='waiting_human':
-  queue_text='Your request is in the support queue. An agent will join shortly.'
-  if lang=='rw':queue_text=groq_client.translate_text(queue_text,'Kinyarwanda')
+  expire_handoff(cid); d=getconv(cid,cust)
+ if d['status']=='waiting_human':
+  _,reply_language=groq_client.detect_language_and_translate_to_english(text)
+  queue_text=waiting_reply(d,reply_language)
   s=save(cid,'bot',queue_text); emit_conv(cid,'new_message',mj(s)); return jsonify(customer_id=cust,conversation=cj(d),mode='waiting_human',response=s['message'],images=[],step_images={})
  try:
   search_text,reply_language=groq_client.detect_language_and_translate_to_english(text)
-  if wants_human(search_text):
-   d=convs.find_one_and_update({'_id':ObjectId(cid),'status':{'$in':['bot_active','waiting_human']}},{'$set':{'status':'waiting_human','updated_at':now()}},return_document=ReturnDocument.AFTER)
-   wait_text='Sure. I’m connecting you with a KoraLink support agent. Please wait while an agent joins the conversation.'
-   if reply_language.lower()!='english':wait_text=groq_client.translate_text(wait_text,reply_language)
+  followup_state=d.get('followup_state')
+  if followup_state=='awaiting_satisfaction' and affirmative(search_text):
+   convs.update_one({'_id':ObjectId(cid)},{'$unset':{'followup_state':''}})
+   answer='Great, I’m glad that helped. What else can I help you with?'
+   if reply_language.lower()!='english': answer=groq_client.translate_text(answer,reply_language)
+   s=save(cid,'bot',answer); emit_conv(cid,'new_message',mj(s))
+   return jsonify(customer_id=cust,conversation=cj(d),mode='bot',response=s['message'],images=[],step_images={})
+  if followup_state=='awaiting_satisfaction' and negative(search_text):
+   convs.update_one({'_id':ObjectId(cid)},{'$set':{'followup_state':'awaiting_supervisor'}})
+   answer='Would you like to speak with a supervisor? Reply Yes to connect, or No to continue with AI support.'
+   if reply_language.lower()!='english': answer=groq_client.translate_text(answer,reply_language)
+   s=save(cid,'bot',answer); emit_conv(cid,'new_message',mj(s))
+   return jsonify(customer_id=cust,conversation=cj(d),mode='bot',response=s['message'],images=[],step_images={})
+  wants_supervisor=followup_state=='awaiting_supervisor' and affirmative(search_text)
+  if followup_state=='awaiting_supervisor' and negative(search_text):
+   convs.update_one({'_id':ObjectId(cid)},{'$unset':{'followup_state':''}})
+   answer='Okay, I’ll keep helping with AI support. What would you like to know?'
+   if reply_language.lower()!='english': answer=groq_client.translate_text(answer,reply_language)
+   s=save(cid,'bot',answer); emit_conv(cid,'new_message',mj(s))
+   return jsonify(customer_id=cust,conversation=cj(d),mode='bot',response=s['message'],images=[],step_images={})
+  if followup_state:
+   convs.update_one({'_id':ObjectId(cid)},{'$unset':{'followup_state':''}})
+  if wants_human(search_text) or wants_supervisor:
+   handoff_time=now(); estimated_minutes=estimate_wait_minutes(d)
+   d=convs.find_one_and_update({'_id':ObjectId(cid),'status':{'$in':['bot_active','waiting_human']}},{'$set':{'status':'waiting_human','updated_at':handoff_time,'handoff_requested_at':handoff_time,'estimated_wait_seconds':estimated_minutes*60 if estimated_minutes is not None else None,'reply_language':reply_language},'$unset':{'followup_state':''}},return_document=ReturnDocument.AFTER)
+   wait_text='Sure. I’m connecting you with a KoraLink support agent. '+waiting_reply(d,reply_language)
    s=save(cid,'bot',wait_text)
    emit_conv(cid,'new_message',mj(s)); socketio.emit('queue_updated',{},room='agents')
    return jsonify(customer_id=cust,conversation=cj(d),mode='waiting_human',response=s['message'],images=[],step_images={})
   result=scp.answer_finder(search_text); answer=result['answer']; images=result['images']; steps=result['step_images']
+  answer+='\n\nDid this answer solve your issue? Reply Yes if it did, or No if you still need help.'
   if reply_language.lower()!='english':answer,images,steps=groq_client.translate_answer_and_images(answer,images,reply_language,steps)
   answer=answer.replace('â€“','-').replace('â€”','-').replace('â€','')
  except Exception:
   app.logger.exception('Chatbot or language translation error'); return jsonify(error='Chatbot processing failed. Please try again or contact support.'),502
+ convs.update_one({'_id':ObjectId(cid)},{'$set':{'followup_state':'awaiting_satisfaction'}})
  bm=save(cid,'bot',answer,payload={'images':images,'step_images':steps}); emit_conv(cid,'new_message',mj(bm))
  return jsonify(customer_id=cust,conversation=cj(d),mode='bot',response=answer,images=images,step_images=steps)
 
@@ -126,6 +195,7 @@ def agent_me():
 def queue():
  a,e=req_agent()
  if e:return e
+ expire_due_handoffs()
  out=[]
  for d in convs.find({'status':'waiting_human'}).sort('created_at',1).limit(100):
   last=msgs.find_one({'conversation_id':str(d['_id'])},sort=[('created_at',-1)]); out.append({**cj(d),'last_message':mj(last) if last else None})
@@ -141,12 +211,13 @@ def agent_history(cid):
  if e:return e
  d=getconv(cid)
  if not d:return jsonify(error='Conversation not found'),404
+ expire_handoff(cid); d=getconv(cid)
  return jsonify(conversation=cj(d),messages=[mj(x) for x in msgs.find({'conversation_id':cid}).sort('created_at',1).limit(500)])
 @app.post('/api/agent/conversation/<cid>/claim')
 def claim(cid):
  a,e=req_agent()
  if e:return e
- d=convs.find_one_and_update({'_id':ObjectId(cid),'status':'waiting_human','agent_id':None},{'$set':{'status':'human_active','agent_id':str(a['_id']),'updated_at':now()}},return_document=ReturnDocument.AFTER)
+ d=convs.find_one_and_update({'_id':ObjectId(cid),'status':'waiting_human','agent_id':None},{'$set':{'status':'human_active','agent_id':str(a['_id']),'claimed_at':now(),'updated_at':now()},'$unset':{'handoff_requested_at':'','estimated_wait_seconds':''}},return_document=ReturnDocument.AFTER)
  if not d:return jsonify(error='Conversation was already claimed or is unavailable'),409
  s=save(cid,'system',f"{a.get('name','A support agent')} has joined the conversation.",str(a['_id'])); emit_conv(cid,'conversation_claimed',{'conversation':cj(d)}); emit_conv(cid,'new_message',mj(s)); socketio.emit('queue_updated',{},room='agents'); return jsonify(conversation=cj(d))
 @app.post('/api/agent/conversation/<cid>/message')
