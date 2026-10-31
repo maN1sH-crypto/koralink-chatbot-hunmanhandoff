@@ -37,7 +37,7 @@ The repository does not contain a live ngrok URL. Use a stable HTTPS backend dom
 For client-facing monthly and implementation budget planning, use the estimates in the existing **Budget draft for a client proposal** section below and verify vendor pricing before quoting.
 
 ---
-## Budget draft for a client proposal
+## Budget draft
 
 This is a planning estimate in USD, not a vendor quote. Confirm provider prices, region, tax, storage, expected usage, and service limits before committing. Render publishes current compute plans and pricing on its [pricing page](https://render.com/pricing); a 1 CPU / 2 GB service is identified as `1c-2g` in its [compute plan documentation](https://render.com/docs/compute-plans). MongoDB Atlas lists M0 at $0, Flex at $8–$30/month, and dedicated clusters from $56.94/month on its [pricing page](https://www.mongodb.com/pricing). Netlify currently lists Free at $0, Personal at $9/month, and Pro starting at $20/month on its [pricing page](https://www.netlify.com/pricing/). Groq lists GPT-OSS 120B at $0.15 per million input tokens and $0.60 per million output tokens; LLM usage must be measured from real conversations ([model pricing](https://console.groq.com/docs/model/openai/gpt-oss-120b)).
 
