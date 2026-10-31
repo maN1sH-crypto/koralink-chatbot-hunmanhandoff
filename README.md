@@ -34,7 +34,7 @@ The browser sends messages to Flask. Flask stores conversation history and state
 
 The repository does not contain a live ngrok URL. Use a stable HTTPS backend domain for production; configure the static frontend's API URL and set `FRONTEND_ORIGIN` to the exact approved frontend domain. The built-in `python app.py` server is for development and demos; production needs a persistent host and a Flask-SocketIO-compatible server/runtime.
 
-For client-facing monthly and implementation budget planning, use the estimates in the existing **Budget draft for a client proposal** section below and verify vendor pricing before quoting.
+
 
 ---
 
